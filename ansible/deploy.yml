@@ -43,6 +43,14 @@
         name: pulse-backend
         state: absent
 
+    - name: Ensure pulse data directory exists on host
+      file:
+        path: /opt/pulse/data
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
     - name: Run backend container
       community.docker.docker_container:
         name: pulse-backend
@@ -52,6 +60,8 @@
           - "5000:5000"
         env:
           GITHUB_TOKEN: "{{ github_token }}"
+        volumes:
+          - "/opt/pulse/data:/data"
         restart_policy: always
 
     - name: Pull frontend image from ECR

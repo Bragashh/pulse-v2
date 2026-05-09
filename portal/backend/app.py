@@ -4,8 +4,9 @@ import psutil
 import requests
 import time
 from datetime import datetime, timezone, timedelta
-
 import os
+
+import db
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
