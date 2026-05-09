@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import psutil
 import requests
@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone, timedelta
 import os
 
+import sqlite3
 import db
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
@@ -19,11 +20,22 @@ def github_headers():
 app = Flask(__name__)
 CORS(app)
 
-SERVICES = [
+# Seed services — copied to the database on first startup if the DB is empty.
+# After that, services are managed via the /services endpoints.
+SEED_SERVICES = [
     {"name": "Google", "url": "https://www.google.com"},
     {"name": "GitHub", "url": "https://github.com"},
     {"name": "Gitea", "url": "https://gitea.dev.bodnarescu.ro"},
 ]
+
+
+def seed_services_if_empty():
+    """If the database has no services, populate it with the defaults."""
+    existing = db.list_monitored_services()
+    if existing:
+        return
+    for service in SEED_SERVICES:
+        db.add_monitored_service(service["name"], service["url"])
 
 @app.route('/health')
 def health():
@@ -51,8 +63,11 @@ def metrics():
 
 @app.route('/uptime')
 def uptime():
+    seed_services_if_empty()
+    services = db.list_monitored_services()
+
     results = []
-    for service in SERVICES:
+    for service in services:
         try:
             start = time.time()
             response = requests.get(service["url"], timeout=5)
@@ -129,7 +144,7 @@ def score():
     if disk > 80: total -= 20
     elif disk > 60: total -= 10
 
-    for service in SERVICES:
+    for service in db.list_monitored_services():
         try:
             r = requests.get(service["url"], timeout=5)
             if r.status_code != 200:
@@ -153,6 +168,61 @@ def score():
         "max": 100,
         "status": "healthy" if total >= 80 else "degraded" if total >= 50 else "critical"
     })
+
+# --- Service management endpoints (self-service Phase 1) ---
+
+@app.route('/services', methods=['GET'])
+def list_services():
+    """Return all currently monitored services."""
+    services = db.list_monitored_services()
+    return jsonify({"services": services})
+
+
+@app.route('/services', methods=['POST'])
+def create_service():
+    """Add a new monitored service."""
+    data = request.get_json(silent=True) or {}
+    name = data.get('name', '').strip()
+    url = data.get('url', '').strip()
+
+    # Validate required fields
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+
+    # Basic URL validation — must look like an HTTP(S) URL
+    if not (url.startswith('http://') or url.startswith('https://')):
+        return jsonify({"error": "url must start with http:// or https://"}), 400
+
+    try:
+        service_id = db.add_monitored_service(name, url)
+    except sqlite3.IntegrityError:
+        return jsonify({"error": f"a service named '{name}' already exists"}), 409
+
+    return jsonify({
+        "id": service_id,
+        "name": name,
+        "url": url,
+    }), 201
+
+
+@app.route('/services/<int:service_id>', methods=['DELETE'])
+def delete_service(service_id):
+    """Soft-delete a monitored service."""
+    deleted = db.soft_delete_monitored_service(service_id)
+    if not deleted:
+        return jsonify({"error": "service not found or already deleted"}), 404
+    return jsonify({"id": service_id, "deleted": True})
+
+
+@app.route('/services/<int:service_id>/restore', methods=['POST'])
+def restore_service(service_id):
+    """Restore a soft-deleted service."""
+    restored = db.restore_monitored_service(service_id)
+    if not restored:
+        return jsonify({"error": "service not found or not deleted"}), 404
+    return jsonify({"id": service_id, "restored": True})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
