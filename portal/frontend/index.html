@@ -12,6 +12,8 @@
     header span { font-size: 0.85rem; color: #64748b; }
     .container { padding: 40px; display: grid; gap: 32px; }
     .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: #64748b; margin-bottom: 16px; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .section-header .section-title { margin-bottom: 0; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
     .card { background: #1a1f2e; border: 1px solid #1e2330; border-radius: 12px; padding: 24px; }
     .card-label { font-size: 0.75rem; color: #64748b; margin-bottom: 8px; }
@@ -25,9 +27,11 @@
     .score-label { font-size: 1rem; color: #94a3b8; }
     .score-status { font-size: 1.2rem; font-weight: 600; margin-top: 4px; }
     .uptime-grid { display: grid; gap: 12px; }
-    .uptime-row { background: #1a1f2e; border: 1px solid #1e2330; border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; }
+    .uptime-row { background: #1a1f2e; border: 1px solid #1e2330; border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .uptime-row-info { flex: 1; min-width: 0; }
+    .uptime-row-actions { display: flex; align-items: center; gap: 12px; }
     .uptime-name { font-size: 0.9rem; font-weight: 600; }
-    .uptime-latency { font-size: 0.78rem; color: #64748b; margin-top: 2px; }
+    .uptime-latency { font-size: 0.78rem; color: #64748b; margin-top: 2px; word-break: break-all; }
     .badge { font-size: 0.7rem; font-weight: 600; padding: 3px 10px; border-radius: 99px; }
     .badge.up { background: #052e16; color: #4ade80; }
     .badge.down { background: #2d0a0a; color: #f87171; }
@@ -35,6 +39,48 @@
     .dora-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
     .loading { color: #475569; font-size: 0.85rem; }
     .refresh { font-size: 0.75rem; color: #475569; }
+
+    /* Buttons */
+    .btn {
+      background: #1a1f2e; color: #e2e8f0; border: 1px solid #1e2330;
+      padding: 8px 14px; border-radius: 8px; cursor: pointer;
+      font-size: 0.8rem; font-weight: 500; font-family: inherit;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn:hover { background: #252b3d; border-color: #334155; }
+    .btn-primary { background: #0369a1; border-color: #0369a1; color: #fff; }
+    .btn-primary:hover { background: #0284c7; border-color: #0284c7; }
+    .btn-danger { background: transparent; border-color: transparent; color: #64748b; padding: 4px 8px; }
+    .btn-danger:hover { background: #2d0a0a; color: #f87171; border-color: #2d0a0a; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+      display: none; align-items: center; justify-content: center;
+      z-index: 100; backdrop-filter: blur(2px);
+    }
+    .modal-backdrop.show { display: flex; }
+    .modal {
+      background: #1a1f2e; border: 1px solid #1e2330; border-radius: 12px;
+      padding: 28px; width: 100%; max-width: 440px; margin: 16px;
+    }
+    .modal h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 20px; color: #f1f5f9; }
+    .form-row { margin-bottom: 16px; }
+    .form-row label {
+      display: block; font-size: 0.75rem; color: #94a3b8;
+      margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .form-row input {
+      width: 100%; background: #0f1117; border: 1px solid #1e2330;
+      border-radius: 8px; padding: 10px 12px; color: #e2e8f0;
+      font-size: 0.9rem; font-family: inherit;
+    }
+    .form-row input:focus { outline: none; border-color: #0369a1; }
+    .form-error {
+      color: #f87171; font-size: 0.8rem; margin-top: 12px; min-height: 1em;
+    }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
   </style>
 </head>
 <body>
@@ -84,7 +130,10 @@
 
   <!-- Uptime -->
   <div>
-    <div class="section-title">Uptime</div>
+    <div class="section-header">
+      <div class="section-title">Uptime</div>
+      <button class="btn btn-primary" id="open-add-modal">+ Add Service</button>
+    </div>
     <div class="uptime-grid" id="uptime-grid">
       <div class="loading">Loading services...</div>
     </div>
@@ -107,6 +156,26 @@
     </div>
   </div>
 
+</div>
+
+<!-- Add Service Modal -->
+<div class="modal-backdrop" id="add-modal-backdrop">
+  <div class="modal">
+    <h2>Add Service</h2>
+    <div class="form-row">
+      <label for="service-name">Name</label>
+      <input type="text" id="service-name" placeholder="e.g. Cloudflare" autocomplete="off" />
+    </div>
+    <div class="form-row">
+      <label for="service-url">URL</label>
+      <input type="text" id="service-url" placeholder="https://example.com" autocomplete="off" />
+    </div>
+    <div class="form-error" id="form-error"></div>
+    <div class="modal-actions">
+      <button class="btn" id="cancel-add">Cancel</button>
+      <button class="btn btn-primary" id="submit-add">Save</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -134,15 +203,37 @@
     const data = await res.json();
     const grid = document.getElementById('uptime-grid');
     grid.innerHTML = '';
+
+    if (data.services.length === 0) {
+      grid.innerHTML = '<div class="loading">No services yet — click "Add Service" to get started.</div>';
+      return;
+    }
+
     data.services.forEach(s => {
       const row = document.createElement('div');
       row.className = 'uptime-row';
       row.innerHTML =
-        '<div>' +
-          '<div class="uptime-name">' + s.name + '</div>' +
-          '<div class="uptime-latency">' + (s.latency_ms ? s.latency_ms + 'ms' : 'N/A') + ' — ' + s.url + '</div>' +
+        '<div class="uptime-row-info">' +
+          '<div class="uptime-name"></div>' +
+          '<div class="uptime-latency"></div>' +
         '</div>' +
-        '<span class="badge ' + s.status + '">' + s.status + '</span>';
+        '<div class="uptime-row-actions">' +
+          '<span class="badge"></span>' +
+          '<button class="btn btn-danger" title="Delete service">✕</button>' +
+        '</div>';
+
+      // Set text content via .textContent to avoid HTML injection
+      row.querySelector('.uptime-name').textContent = s.name;
+      row.querySelector('.uptime-latency').textContent =
+        (s.latency_ms ? s.latency_ms + 'ms' : 'N/A') + ' — ' + s.url;
+      const badge = row.querySelector('.badge');
+      badge.textContent = s.status;
+      badge.classList.add(s.status);
+
+      // Wire up delete (we need the service id, which /uptime doesn't return —
+      // we look it up via /services on click)
+      row.querySelector('.btn-danger').addEventListener('click', () => deleteService(s.name));
+
       grid.appendChild(row);
     });
   }
@@ -159,6 +250,103 @@
   async function refresh() {
     await Promise.all([fetchScore(), fetchMetrics(), fetchUptime(), fetchDora()]);
     document.getElementById('last-refresh').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+  }
+
+  // --- Modal logic ---
+
+  const modal = document.getElementById('add-modal-backdrop');
+  const nameInput = document.getElementById('service-name');
+  const urlInput = document.getElementById('service-url');
+  const errorEl = document.getElementById('form-error');
+  const submitBtn = document.getElementById('submit-add');
+
+  function openModal() {
+    nameInput.value = '';
+    urlInput.value = '';
+    errorEl.textContent = '';
+    modal.classList.add('show');
+    nameInput.focus();
+  }
+
+  function closeModal() {
+    modal.classList.remove('show');
+  }
+
+  document.getElementById('open-add-modal').addEventListener('click', openModal);
+  document.getElementById('cancel-add').addEventListener('click', closeModal);
+
+  // Close modal when clicking outside the modal box
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  // Submit on Enter inside the form fields
+  [nameInput, urlInput].forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitAdd();
+      if (e.key === 'Escape') closeModal();
+    });
+  });
+
+  document.getElementById('submit-add').addEventListener('click', submitAdd);
+
+  async function submitAdd() {
+    const name = nameInput.value.trim();
+    const url = urlInput.value.trim();
+
+    if (!name || !url) {
+      errorEl.textContent = 'Both name and URL are required.';
+      return;
+    }
+
+    submitBtn.disabled = true;
+    errorEl.textContent = '';
+
+    try {
+      const res = await fetch(API + '/services', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, url }),
+      });
+
+      if (res.status === 201) {
+        closeModal();
+        await refresh();
+      } else {
+        const data = await res.json();
+        errorEl.textContent = data.error || 'Something went wrong.';
+      }
+    } catch (e) {
+      errorEl.textContent = 'Network error: ' + e.message;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  }
+
+  // --- Delete logic ---
+
+  async function deleteService(name) {
+    if (!confirm('Delete service "' + name + '"? This can be undone via the API.')) {
+      return;
+    }
+
+    // Look up the service id by name
+    const listRes = await fetch(API + '/services');
+    const listData = await listRes.json();
+    const service = listData.services.find(s => s.name === name);
+
+    if (!service) {
+      alert('Service not found.');
+      await refresh();
+      return;
+    }
+
+    const res = await fetch(API + '/services/' + service.id, { method: 'DELETE' });
+    if (res.ok) {
+      await refresh();
+    } else {
+      alert('Failed to delete service.');
+    }
   }
 
   refresh();
