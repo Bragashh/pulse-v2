@@ -1,15 +1,17 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 import psutil
 import requests
+import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
 import os
 
-import sqlite3
 import db
+import metrics
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+
 
 def github_headers():
     headers = {"Accept": "application/vnd.github+json"}
@@ -17,11 +19,12 @@ def github_headers():
         headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
     return headers
 
+
 app = Flask(__name__)
 CORS(app)
 
+
 # Seed services — copied to the database on first startup if the DB is empty.
-# After that, services are managed via the /services endpoints.
 SEED_SERVICES = [
     {"name": "Google", "url": "https://www.google.com"},
     {"name": "GitHub", "url": "https://github.com"},
@@ -37,34 +40,54 @@ def seed_services_if_empty():
     for service in SEED_SERVICES:
         db.add_monitored_service(service["name"], service["url"])
 
+
 @app.route('/health')
+@metrics.track_request('health')
 def health():
     return jsonify({"status": "ok", "service": "pulse-backend"})
 
+
 @app.route('/')
+@metrics.track_request('index')
 def index():
     return jsonify({"message": "Pulse API is running"})
 
+
 @app.route('/metrics')
-def metrics():
+@metrics.track_request('metrics')
+def system_metrics():
+    cpu = psutil.cpu_percent(interval=1)
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+
+    # Update gauges so Prometheus sees the latest values
+    metrics.cpu_percent.set(cpu)
+    metrics.memory_percent.set(mem.percent)
+    metrics.disk_percent.set(disk.percent)
+
     return jsonify({
-        "cpu": {"percent": psutil.cpu_percent(interval=1)},
+        "cpu": {"percent": cpu},
         "memory": {
-            "total": psutil.virtual_memory().total,
-            "used": psutil.virtual_memory().used,
-            "percent": psutil.virtual_memory().percent
+            "total": mem.total,
+            "used": mem.used,
+            "percent": mem.percent
         },
         "disk": {
-            "total": psutil.disk_usage('/').total,
-            "used": psutil.disk_usage('/').used,
-            "percent": psutil.disk_usage('/').percent
+            "total": disk.total,
+            "used": disk.used,
+            "percent": disk.percent
         }
     })
 
+
 @app.route('/uptime')
+@metrics.track_request('uptime')
 def uptime():
     seed_services_if_empty()
     services = db.list_monitored_services()
+
+    # Update the gauge for "services count"
+    metrics.monitored_services_count.set(len(services))
 
     results = []
     for service in services:
@@ -88,7 +111,9 @@ def uptime():
             })
     return jsonify({"services": results})
 
+
 @app.route('/dora')
+@metrics.track_request('dora')
 def dora():
     headers = github_headers()
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
@@ -127,7 +152,9 @@ def dora():
         }
     })
 
+
 @app.route('/score')
+@metrics.track_request('score')
 def score():
     total = 100
 
@@ -169,9 +196,11 @@ def score():
         "status": "healthy" if total >= 80 else "degraded" if total >= 50 else "critical"
     })
 
+
 # --- Service management endpoints (self-service Phase 1) ---
 
 @app.route('/services', methods=['GET'])
+@metrics.track_request('services_list')
 def list_services():
     """Return all currently monitored services."""
     services = db.list_monitored_services()
@@ -179,19 +208,18 @@ def list_services():
 
 
 @app.route('/services', methods=['POST'])
+@metrics.track_request('services_create')
 def create_service():
     """Add a new monitored service."""
     data = request.get_json(silent=True) or {}
     name = data.get('name', '').strip()
     url = data.get('url', '').strip()
 
-    # Validate required fields
     if not name:
         return jsonify({"error": "name is required"}), 400
     if not url:
         return jsonify({"error": "url is required"}), 400
 
-    # Basic URL validation — must look like an HTTP(S) URL
     if not (url.startswith('http://') or url.startswith('https://')):
         return jsonify({"error": "url must start with http:// or https://"}), 400
 
@@ -208,6 +236,7 @@ def create_service():
 
 
 @app.route('/services/<int:service_id>', methods=['DELETE'])
+@metrics.track_request('services_delete')
 def delete_service(service_id):
     """Soft-delete a monitored service."""
     deleted = db.soft_delete_monitored_service(service_id)
@@ -217,12 +246,23 @@ def delete_service(service_id):
 
 
 @app.route('/services/<int:service_id>/restore', methods=['POST'])
+@metrics.track_request('services_restore')
 def restore_service(service_id):
     """Restore a soft-deleted service."""
     restored = db.restore_monitored_service(service_id)
     if not restored:
         return jsonify({"error": "service not found or not deleted"}), 404
     return jsonify({"id": service_id, "restored": True})
+
+
+# --- Prometheus scrape endpoint ---
+
+@app.route('/prometheus-metrics')
+def prometheus_metrics():
+    """Endpoint Prometheus scrapes to collect all defined metrics."""
+    body, content_type = metrics.metrics_response()
+    return Response(body, mimetype=content_type)
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

@@ -1,0 +1,15 @@
+# Prometheus configuration for Pulse.
+# Scrapes the backend's /prometheus-metrics endpoint every 15 seconds.
+
+global:
+  scrape_interval: 15s          # how often Prometheus checks each target
+  evaluation_interval: 15s      # how often Prometheus evaluates alert rules
+
+scrape_configs:
+  - job_name: 'pulse-backend'
+    metrics_path: '/prometheus-metrics'
+    static_configs:
+      - targets: ['172.17.0.1:5000']
+        labels:
+          environment: 'local'
+          service: 'pulse-backend'
