@@ -1,0 +1,77 @@
+---
+- name: Deploy pulse services
+  hosts: all
+  become: yes
+  vars_files:
+  - vault.yaml  
+
+  vars:
+    ecr_registry: "871576119954.dkr.ecr.eu-central-1.amazonaws.com"
+    aws_region: "eu-central-1"
+
+  tasks:
+    - name: Install required packages
+      apt:
+        name:
+          - docker.io
+          - python3-pip
+        state: present
+        update_cache: yes
+
+    - name: Install AWS CLI
+      shell: pip3 install awscli --break-system-packages
+
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Login to ECR
+      shell: |
+        aws ecr get-login-password --region {{ aws_region }} | \
+        docker login --username AWS --password-stdin {{ ecr_registry }}
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+
+    - name: Pull backend image from ECR
+      shell: docker pull {{ ecr_registry }}/pulse-backend:latest
+
+    - name: Stop existing backend container
+      community.docker.docker_container:
+        name: pulse-backend
+        state: absent
+
+    - name: Run backend container
+      community.docker.docker_container:
+        name: pulse-backend
+        image: "{{ ecr_registry }}/pulse-backend:latest"
+        state: started
+        ports:
+          - "5000:5000"
+        env:
+          GITHUB_TOKEN: "{{ github_token }}"
+        restart_policy: always
+
+    - name: Pull frontend image from ECR
+      shell: docker pull {{ ecr_registry }}/pulse-frontend:latest
+
+    - name: Stop existing frontend container
+      community.docker.docker_container:
+        name: pulse-frontend
+        state: absent
+
+    - name: Run frontend container
+      community.docker.docker_container:
+        name: pulse-frontend
+        image: "{{ ecr_registry }}/pulse-frontend:latest"
+        state: started
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - "/etc/letsencrypt:/etc/letsencrypt:ro"
+        links:
+          - "pulse-backend:pulse-backend"
+        restart_policy: always
