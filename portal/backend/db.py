@@ -274,3 +274,20 @@ def soft_delete_deployed_service(service_id: int) -> bool:
             (service_id,),
         )
         return cursor.rowcount > 0
+
+
+def list_deployments_with_image_for_service(service_id: int, limit: int = 10) -> list[dict]:
+    """
+    Return recent deployment history for a service, newest first.
+
+    Each row includes the image_tag and status, which is what rollback needs
+    to populate the history modal.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, image_tag, status, deployed_at "
+            "FROM deployments WHERE service_id = ? "
+            "ORDER BY deployed_at DESC LIMIT ?",
+            (service_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]

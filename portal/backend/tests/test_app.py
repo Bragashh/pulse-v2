@@ -566,3 +566,117 @@ def test_promote_handles_kubernetes_failure(client, mocker):
     })
     response = client.post("/deployments/willfail/promote")
     assert response.status_code == 500
+
+# --- /deployments/<name>/history ---
+
+def test_history_returns_deployments(client, mocker):
+    """History endpoint returns deployment records in reverse chronological order."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "histtest", "service": "histtest", "namespace": "pulse-deployed", "node_port": 31400,
+    })
+    mocker.patch("app.threading.Thread")
+
+    # Deploy twice with different images
+    client.post("/services/deploy", json={
+        "name": "histtest", "image": "histtest:v1", "port": 80, "environment": "staging",
+    })
+    # Note: we'd normally rollback or redeploy here, but for the test the service constraints
+    # mean the second deploy attempt would 409. So we directly insert a second deployment row.
+    import db as db_module
+    svc = db_module.get_deployed_service_by_name("histtest", "staging")
+    db_module.add_deployment(svc["id"], "histtest:v2", "staging", status="healthy")
+
+    response = client.get("/deployments/histtest/history")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data["history"]) >= 2
+
+
+def test_history_returns_404_for_nonexistent(client):
+    """History for a non-existent service returns 404."""
+    response = client.get("/deployments/never-existed/history")
+    assert response.status_code == 404
+
+
+# --- /deployments/<name>/rollback ---
+
+def test_rollback_returns_202(client, mocker):
+    """Rolling back to a historical deployment returns 202."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "rbtest", "service": "rbtest", "namespace": "pulse-deployed", "node_port": 31500,
+    })
+    mocker.patch("app.threading.Thread")
+
+    client.post("/services/deploy", json={
+        "name": "rbtest", "image": "rbtest:v1", "port": 80, "environment": "staging",
+    })
+
+    # Inject a second deployment so we have something to roll back to
+    import db as db_module
+    svc = db_module.get_deployed_service_by_name("rbtest", "staging")
+    older_id = db_module.add_deployment(svc["id"], "rbtest:v0", "staging", status="healthy")
+
+    response = client.post("/deployments/rbtest/rollback", json={
+        "deployment_id": older_id,
+        "environment": "staging",
+    })
+    assert response.status_code == 202
+    data = response.get_json()
+    assert data["rolled_back_to_image"] == "rbtest:v0"
+    assert data["status"] == "rolling_back"
+
+
+def test_rollback_uses_correct_image(client, mocker):
+    """Rollback should call deploy_service with the historical image."""
+    deploy_calls = []
+    def capture_deploy(name, image, port, replicas):
+        deploy_calls.append({"image": image})
+        return {"deployment": name, "service": name, "namespace": "pulse-deployed", "node_port": 31600}
+
+    mocker.patch("app.deployer.deploy_service", side_effect=capture_deploy)
+    mocker.patch("app.threading.Thread")
+
+    client.post("/services/deploy", json={
+        "name": "imgtest", "image": "imgtest:current", "port": 80, "environment": "staging",
+    })
+
+    import db as db_module
+    svc = db_module.get_deployed_service_by_name("imgtest", "staging")
+    target_id = db_module.add_deployment(svc["id"], "imgtest:old", "staging", status="healthy")
+
+    client.post("/deployments/imgtest/rollback", json={"deployment_id": target_id})
+
+    # The second deploy call (the rollback) should use the old image
+    assert len(deploy_calls) == 2
+    assert deploy_calls[1]["image"] == "imgtest:old"
+
+
+def test_rollback_requires_deployment_id(client):
+    """Rollback without a deployment_id returns 400."""
+    response = client.post("/deployments/whatever/rollback", json={})
+    assert response.status_code == 400
+
+
+def test_rollback_nonexistent_service_returns_404(client):
+    """Rolling back a non-existent service returns 404."""
+    response = client.post("/deployments/never-existed/rollback", json={
+        "deployment_id": 1,
+    })
+    assert response.status_code == 404
+
+
+def test_rollback_to_nonexistent_deployment_returns_404(client, mocker):
+    """Rolling back to a deployment_id that doesn't exist in history returns 404."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "rbnone", "service": "rbnone", "namespace": "pulse-deployed", "node_port": 31700,
+    })
+    mocker.patch("app.threading.Thread")
+
+    client.post("/services/deploy", json={
+        "name": "rbnone", "image": "nginx", "port": 80, "environment": "staging",
+    })
+
+    response = client.post("/deployments/rbnone/rollback", json={
+        "deployment_id": 99999,  # does not exist
+    })
+    assert response.status_code == 404

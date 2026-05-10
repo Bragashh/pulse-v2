@@ -473,5 +473,97 @@ def promote_deployment(name):
         "status": "deploying",
     }), 202
 
+@app.route('/deployments/<name>/history', methods=['GET'])
+@metrics.track_request('deployments_history')
+def deployment_history(name):
+    """
+    Get the deployment history for a service.
+    
+    Optional query: environment=staging|production (defaults to staging)
+    """
+    environment = request.args.get('environment', 'staging')
+
+    svc = db.get_deployed_service_by_name(name, environment)
+    if not svc:
+        return jsonify({"error": "service not found"}), 404
+
+    history = db.list_deployments_with_image_for_service(svc["id"], limit=10)
+
+    return jsonify({
+        "name": name,
+        "environment": environment,
+        "history": history,
+    })
+
+
+@app.route('/deployments/<name>/rollback', methods=['POST'])
+@metrics.track_request('deployments_rollback')
+def rollback_deployment(name):
+    """
+    Roll back a deployment to a previous version.
+
+    Body: { deployment_id: <int>, environment: "staging"|"production" }
+
+    The deployment_id refers to an entry from the deployment history.
+    The image_tag from that historical row is redeployed.
+    """
+    data = request.get_json(silent=True) or {}
+    target_deployment_id = data.get('deployment_id')
+    environment = data.get('environment', 'staging')
+
+    if not target_deployment_id:
+        return jsonify({"error": "deployment_id is required"}), 400
+
+    # Find the service
+    svc = db.get_deployed_service_by_name(name, environment)
+    if not svc:
+        return jsonify({"error": "service not found"}), 404
+
+    # Find the target deployment in history
+    history = db.list_deployments_with_image_for_service(svc["id"], limit=50)
+    target = next((d for d in history if d["id"] == target_deployment_id), None)
+    if not target:
+        return jsonify({"error": "deployment not found in history"}), 404
+
+    target_image = target["image_tag"]
+
+    # Record the rollback as a NEW deployment (so history stays append-only)
+    deployment_id = db.add_deployment(
+        svc["id"], target_image, environment, status="rolling_back"
+    )
+
+    # Production deployments use the -prod suffix in Kubernetes
+    deployment_name = name if environment == "staging" else f"{name}-prod"
+
+    try:
+        result = deployer.deploy_service(
+            name=deployment_name,
+            image=target_image,
+            port=svc["port"],
+            replicas=svc["replicas"],
+        )
+    except Exception as e:
+        db.update_deployment_status(deployment_id, "failed")
+        return jsonify({"error": f"rollback failed: {str(e)}"}), 500
+
+    # Background poll for health
+    thread = threading.Thread(
+        target=_async_poll_status,
+        args=(deployment_id, deployment_name),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({
+        "service_id": svc["id"],
+        "deployment_id": deployment_id,
+        "name": name,
+        "environment": environment,
+        "rolled_back_to_image": target_image,
+        "rolled_back_to_deployment_id": target_deployment_id,
+        "node_port": result["node_port"],
+        "status": "rolling_back",
+    }), 202
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

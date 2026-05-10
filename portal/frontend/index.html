@@ -222,6 +222,23 @@
   </div>
 </div>
 
+<!-- Rollback Modal -->
+<div class="modal-backdrop" id="rollback-modal-backdrop">
+  <div class="modal" style="max-width: 540px">
+    <h2>Rollback Deployment</h2>
+    <div style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 16px">
+      Select a previous deployment to roll back to. The chosen image will be redeployed.
+    </div>
+    <div id="rollback-history" style="display: grid; gap: 8px; margin-bottom: 16px;">
+      <div class="loading">Loading history...</div>
+    </div>
+    <div class="form-error" id="rollback-error"></div>
+    <div class="modal-actions">
+      <button class="btn" id="cancel-rollback">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
   const API = '/api';
 
@@ -302,6 +319,8 @@
         '<div class="uptime-row-actions">' +
           '<span class="badge env-badge"></span>' +
           '<span class="badge status-badge"></span>' +
+          '<button class="btn rollback-btn" title="Rollback">↺ Rollback</button>' +
+          '<button class="btn promote-btn" style="display:none" title="Promote to production">↑ Promote</button>' +
           '<button class="btn btn-danger" title="Delete deployment">✕</button>' +
         '</div>';
 
@@ -324,6 +343,7 @@
         promoteBtn.addEventListener('click', () => promoteDeployment(s.name));
       }
 
+      row.querySelector('.rollback-btn').addEventListener('click', () => openRollbackModal(s.name, s.environment));
       row.querySelector('.btn-danger').addEventListener('click', () => deleteDeployment(s.name, s.environment));
       grid.appendChild(row);
     });
@@ -505,6 +525,111 @@
     if (res.ok) await refresh();
     else alert('Failed to delete deployment.');
   }
+
+  // --- Rollback modal ---
+
+  const rollbackModal = document.getElementById('rollback-modal-backdrop');
+  const rollbackHistory = document.getElementById('rollback-history');
+  const rollbackError = document.getElementById('rollback-error');
+
+  let rollbackContext = null; // { name, environment }
+
+  async function openRollbackModal(name, environment) {
+    rollbackContext = { name, environment };
+    rollbackError.textContent = '';
+    rollbackHistory.innerHTML = '<div class="loading">Loading history...</div>';
+    rollbackModal.classList.add('show');
+
+    try {
+      const res = await fetch(API + '/deployments/' + name + '/history?environment=' + environment);
+      if (!res.ok) {
+        rollbackHistory.innerHTML = '<div class="loading">Failed to load history.</div>';
+        return;
+      }
+      const data = await res.json();
+      renderRollbackHistory(data.history);
+    } catch (e) {
+      rollbackHistory.innerHTML = '<div class="loading">Network error: ' + e.message + '</div>';
+    }
+  }
+
+  function renderRollbackHistory(history) {
+    rollbackHistory.innerHTML = '';
+    if (!history || history.length === 0) {
+      rollbackHistory.innerHTML = '<div class="loading">No deployment history yet.</div>';
+      return;
+    }
+
+    history.forEach((entry, idx) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'background: #0f1117; border: 1px solid #1e2330; border-radius: 8px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;';
+
+      const info = document.createElement('div');
+      info.style.cssText = 'flex: 1; min-width: 0;';
+
+      const imageEl = document.createElement('div');
+      imageEl.style.cssText = 'font-size: 0.85rem; color: #f1f5f9; word-break: break-all;';
+      imageEl.textContent = entry.image_tag;
+
+      const metaEl = document.createElement('div');
+      metaEl.style.cssText = 'font-size: 0.72rem; color: #64748b; margin-top: 4px;';
+      metaEl.textContent = entry.deployed_at + ' — id #' + entry.id;
+
+      info.appendChild(imageEl);
+      info.appendChild(metaEl);
+
+      const statusBadge = document.createElement('span');
+      statusBadge.className = 'badge ' + entry.status;
+      statusBadge.textContent = entry.status;
+
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.textContent = idx === 0 ? 'Current' : 'Roll back to this';
+      btn.disabled = idx === 0;  // disable rollback to current
+      if (idx !== 0) {
+        btn.addEventListener('click', () => submitRollback(entry.id));
+      }
+
+      row.appendChild(info);
+      row.appendChild(statusBadge);
+      row.appendChild(btn);
+      rollbackHistory.appendChild(row);
+    });
+  }
+
+  async function submitRollback(deploymentId) {
+    if (!rollbackContext) return;
+    if (!confirm('Roll back to deployment #' + deploymentId + '? This will redeploy the older image.')) return;
+
+    rollbackError.textContent = '';
+
+    try {
+      const res = await fetch(API + '/deployments/' + rollbackContext.name + '/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deployment_id: deploymentId,
+          environment: rollbackContext.environment,
+        }),
+      });
+      if (res.ok) {
+        rollbackModal.classList.remove('show');
+        await refresh();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        rollbackError.textContent = data.error || 'Rollback failed.';
+      }
+    } catch (e) {
+      rollbackError.textContent = 'Network error: ' + e.message;
+    }
+  }
+
+  document.getElementById('cancel-rollback').addEventListener('click', () => {
+    rollbackModal.classList.remove('show');
+  });
+  rollbackModal.addEventListener('click', (e) => {
+    if (e.target === rollbackModal) rollbackModal.classList.remove('show');
+  });
 
   refresh();
   setInterval(refresh, 10000);  // Faster refresh so deployment status updates feel live
