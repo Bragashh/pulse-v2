@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
+from flask import send_from_directory
 import psutil
 import requests
 import sqlite3
@@ -22,6 +23,15 @@ def github_headers():
 
 app = Flask(__name__)
 CORS(app)
+
+# Serve the frontend for local smoke testing.
+# In production, nginx serves the frontend and proxies /api to this backend.
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frontend')
+
+
+@app.route('/dashboard')
+def dashboard():
+    return send_from_directory(FRONTEND_DIR, 'index.html')
 
 
 # Seed services — copied to the database on first startup if the DB is empty.
