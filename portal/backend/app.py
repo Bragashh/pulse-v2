@@ -263,6 +263,139 @@ def prometheus_metrics():
     body, content_type = metrics.metrics_response()
     return Response(body, mimetype=content_type)
 
+# --- Deployment endpoints (self-service Phase 3) ---
+
+import threading
+import deployer
+
+
+def _async_poll_status(deployment_id: int, service_name: str, max_attempts: int = 30):
+    """
+    Poll the deployment status in a background thread and update the DB row
+    as the status changes. Stops on healthy, failed, or after max_attempts.
+    """
+    for _ in range(max_attempts):
+        time.sleep(2)  # poll every 2 seconds
+        try:
+            status = deployer.deployment_status(service_name)
+            db_status = status["status"]
+            if db_status in ("healthy", "failed", "not_found"):
+                final_status = db_status if db_status != "not_found" else "failed"
+                db.update_deployment_status(deployment_id, final_status)
+                return
+            # Otherwise it's "pending" — keep polling
+        except Exception:
+            db.update_deployment_status(deployment_id, "failed")
+            return
+
+    # Timed out
+    db.update_deployment_status(deployment_id, "failed")
+
+
+@app.route('/services/deploy', methods=['POST'])
+@metrics.track_request('services_deploy')
+def deploy_service_endpoint():
+    """
+    Deploy a new service to Kubernetes.
+
+    Body: { name, image, port, replicas, environment }
+
+    Returns 202 (Accepted) immediately; deployment continues in the background.
+    Caller polls GET /api/deployments to see status updates.
+    """
+    data = request.get_json(silent=True) or {}
+    name = data.get('name', '').strip()
+    image = data.get('image', '').strip()
+    port = data.get('port')
+    replicas = data.get('replicas', 1)
+    environment = data.get('environment', 'staging').strip()
+
+    # Validate
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    if not image:
+        return jsonify({"error": "image is required"}), 400
+    if not isinstance(port, int) or port < 1 or port > 65535:
+        return jsonify({"error": "port must be an integer between 1 and 65535"}), 400
+    if not isinstance(replicas, int) or replicas < 1 or replicas > 10:
+        return jsonify({"error": "replicas must be an integer between 1 and 10"}), 400
+    if environment not in ("staging", "production"):
+        return jsonify({"error": "environment must be 'staging' or 'production'"}), 400
+
+    # Avoid name collisions per environment
+    existing = db.get_deployed_service_by_name(name, environment)
+    if existing:
+        return jsonify({
+            "error": f"a service named '{name}' already exists in {environment}"
+        }), 409
+
+    # Record the service in the DB
+    service_id = db.add_deployed_service(name, environment, image, port, replicas)
+    deployment_id = db.add_deployment(service_id, image, environment, status="deploying")
+
+    # Trigger the actual Kubernetes deploy
+    try:
+        result = deployer.deploy_service(name=name, image=image, port=port, replicas=replicas)
+    except Exception as e:
+        db.update_deployment_status(deployment_id, "failed")
+        return jsonify({"error": f"deployment failed: {str(e)}"}), 500
+
+    # Start background polling for health
+    thread = threading.Thread(
+        target=_async_poll_status,
+        args=(deployment_id, name),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({
+        "service_id": service_id,
+        "deployment_id": deployment_id,
+        "name": name,
+        "environment": environment,
+        "node_port": result["node_port"],
+        "status": "deploying",
+    }), 202
+
+
+@app.route('/deployments', methods=['GET'])
+@metrics.track_request('deployments_list')
+def list_deployments():
+    """List all deployed services with their current deployment status."""
+    services = db.list_deployed_services()
+    result = []
+    for svc in services:
+        # Get the most recent deployment for this service
+        deployments = db.list_deployments_for_service(svc["id"], limit=1)
+        latest = deployments[0] if deployments else None
+        result.append({
+            **svc,
+            "latest_status": latest["status"] if latest else "unknown",
+            "latest_deployed_at": latest["deployed_at"] if latest else None,
+        })
+    return jsonify({"deployed_services": result})
+
+
+@app.route('/deployments/<name>', methods=['DELETE'])
+@metrics.track_request('deployments_delete')
+def remove_deployed_service(name):
+    """Delete a deployed service from both Kubernetes and the database."""
+    environment = request.args.get('environment', 'staging')
+
+    svc = db.get_deployed_service_by_name(name, environment)
+    if not svc:
+        return jsonify({"error": "service not found"}), 404
+
+    # Remove from Kubernetes first
+    try:
+        deployer.delete_deployment(name)
+    except Exception as e:
+        return jsonify({"error": f"kubernetes delete failed: {str(e)}"}), 500
+
+    # Then soft-delete from DB
+    db.soft_delete_deployed_service(svc["id"])
+
+    return jsonify({"name": name, "environment": environment, "deleted": True})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

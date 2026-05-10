@@ -351,3 +351,134 @@ def test_can_recreate_service_after_delete(client):
     })
     assert create2.status_code == 201
     assert create2.get_json()["id"] != service_id
+
+# --- /services/deploy ---
+
+def test_deploy_endpoint_returns_202(client, mocker):
+    """Deploying a service returns 202 with deployment info."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "test-svc",
+        "service": "test-svc",
+        "namespace": "pulse-deployed",
+        "node_port": 31000,
+    })
+    # Don't actually start the polling thread
+    mocker.patch("app.threading.Thread")
+
+    response = client.post("/services/deploy", json={
+        "name": "test-svc",
+        "image": "nginx",
+        "port": 80,
+        "replicas": 1,
+        "environment": "staging",
+    })
+    assert response.status_code == 202
+    data = response.get_json()
+    assert data["name"] == "test-svc"
+    assert data["status"] == "deploying"
+    assert data["node_port"] == 31000
+
+
+def test_deploy_rejects_missing_name(client):
+    """Deploy requires a name."""
+    response = client.post("/services/deploy", json={
+        "image": "nginx",
+        "port": 80,
+    })
+    assert response.status_code == 400
+
+
+def test_deploy_rejects_invalid_port(client):
+    """Deploy requires a valid port."""
+    response = client.post("/services/deploy", json={
+        "name": "test-svc",
+        "image": "nginx",
+        "port": "not a number",
+    })
+    assert response.status_code == 400
+
+
+def test_deploy_rejects_invalid_environment(client):
+    """Deploy rejects environments other than staging/production."""
+    response = client.post("/services/deploy", json={
+        "name": "test-svc",
+        "image": "nginx",
+        "port": 80,
+        "environment": "elsewhere",
+    })
+    assert response.status_code == 400
+
+
+def test_deploy_rejects_duplicate_name(client, mocker):
+    """Cannot deploy two services with the same name in same environment."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "dupe", "service": "dupe", "namespace": "pulse-deployed", "node_port": 31000,
+    })
+    mocker.patch("app.threading.Thread")
+
+    client.post("/services/deploy", json={
+        "name": "dupe", "image": "nginx", "port": 80, "environment": "staging",
+    })
+    response = client.post("/services/deploy", json={
+        "name": "dupe", "image": "nginx", "port": 80, "environment": "staging",
+    })
+    assert response.status_code == 409
+
+
+def test_deploy_handles_kubernetes_failure(client, mocker):
+    """If deployer raises, the endpoint returns 500 and marks deployment failed."""
+    mocker.patch("app.deployer.deploy_service", side_effect=Exception("k8s unreachable"))
+
+    response = client.post("/services/deploy", json={
+        "name": "broken", "image": "nginx", "port": 80, "environment": "staging",
+    })
+    assert response.status_code == 500
+
+
+# --- /deployments ---
+
+def test_list_deployments_empty_initially(client):
+    """No deployed services means empty list."""
+    response = client.get("/deployments")
+    assert response.status_code == 200
+    assert response.get_json() == {"deployed_services": []}
+
+
+def test_list_deployments_includes_deployed(client, mocker):
+    """A deployed service shows up in the list."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "listed", "service": "listed", "namespace": "pulse-deployed", "node_port": 31001,
+    })
+    mocker.patch("app.threading.Thread")
+
+    client.post("/services/deploy", json={
+        "name": "listed", "image": "nginx", "port": 80, "environment": "staging",
+    })
+
+    response = client.get("/deployments")
+    data = response.get_json()
+    assert len(data["deployed_services"]) == 1
+    assert data["deployed_services"][0]["name"] == "listed"
+
+
+def test_delete_deployment_returns_200(client, mocker):
+    """Deleting a deployed service returns 200."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "tbd", "service": "tbd", "namespace": "pulse-deployed", "node_port": 31002,
+    })
+    mocker.patch("app.threading.Thread")
+    mocker.patch("app.deployer.delete_deployment", return_value=True)
+
+    client.post("/services/deploy", json={
+        "name": "tbd", "image": "nginx", "port": 80, "environment": "staging",
+    })
+
+    response = client.delete("/deployments/tbd?environment=staging")
+    assert response.status_code == 200
+    assert response.get_json()["deleted"] is True
+
+
+def test_delete_nonexistent_deployment_returns_404(client):
+    """Deleting a non-existent deployed service returns 404."""
+    response = client.delete("/deployments/never-existed?environment=staging")
+    assert response.status_code == 404

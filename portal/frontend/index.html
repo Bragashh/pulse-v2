@@ -33,14 +33,15 @@
     .uptime-name { font-size: 0.9rem; font-weight: 600; }
     .uptime-latency { font-size: 0.78rem; color: #64748b; margin-top: 2px; word-break: break-all; }
     .badge { font-size: 0.7rem; font-weight: 600; padding: 3px 10px; border-radius: 99px; }
-    .badge.up { background: #052e16; color: #4ade80; }
-    .badge.down { background: #2d0a0a; color: #f87171; }
-    .badge.degraded { background: #1e1a05; color: #facc15; }
+    .badge.up, .badge.healthy { background: #052e16; color: #4ade80; }
+    .badge.down, .badge.failed { background: #2d0a0a; color: #f87171; }
+    .badge.degraded, .badge.deploying, .badge.pending { background: #1e1a05; color: #facc15; }
+    .badge.staging { background: #1e293b; color: #94a3b8; }
+    .badge.production { background: #1e2a3b; color: #7dd3fc; }
     .dora-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
     .loading { color: #475569; font-size: 0.85rem; }
     .refresh { font-size: 0.75rem; color: #475569; }
 
-    /* Buttons */
     .btn {
       background: #1a1f2e; color: #e2e8f0; border: 1px solid #1e2330;
       padding: 8px 14px; border-radius: 8px; cursor: pointer;
@@ -54,7 +55,6 @@
     .btn-danger:hover { background: #2d0a0a; color: #f87171; border-color: #2d0a0a; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Modal */
     .modal-backdrop {
       position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
       display: none; align-items: center; justify-content: center;
@@ -63,20 +63,21 @@
     .modal-backdrop.show { display: flex; }
     .modal {
       background: #1a1f2e; border: 1px solid #1e2330; border-radius: 12px;
-      padding: 28px; width: 100%; max-width: 440px; margin: 16px;
+      padding: 28px; width: 100%; max-width: 480px; margin: 16px;
     }
     .modal h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 20px; color: #f1f5f9; }
     .form-row { margin-bottom: 16px; }
+    .form-row.inline { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .form-row label {
       display: block; font-size: 0.75rem; color: #94a3b8;
       margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;
     }
-    .form-row input {
+    .form-row input, .form-row select {
       width: 100%; background: #0f1117; border: 1px solid #1e2330;
       border-radius: 8px; padding: 10px 12px; color: #e2e8f0;
       font-size: 0.9rem; font-family: inherit;
     }
-    .form-row input:focus { outline: none; border-color: #0369a1; }
+    .form-row input:focus, .form-row select:focus { outline: none; border-color: #0369a1; }
     .form-error {
       color: #f87171; font-size: 0.8rem; margin-top: 12px; min-height: 1em;
     }
@@ -94,7 +95,6 @@
 
 <div class="container">
 
-  <!-- Health Score -->
   <div>
     <div class="section-title">Health Score</div>
     <div class="score-card">
@@ -106,7 +106,6 @@
     </div>
   </div>
 
-  <!-- Server Metrics -->
   <div>
     <div class="section-title">Server Metrics</div>
     <div class="grid">
@@ -128,7 +127,6 @@
     </div>
   </div>
 
-  <!-- Uptime -->
   <div>
     <div class="section-header">
       <div class="section-title">Uptime</div>
@@ -139,7 +137,16 @@
     </div>
   </div>
 
-  <!-- DORA Metrics -->
+  <div>
+    <div class="section-header">
+      <div class="section-title">Deployed Services</div>
+      <button class="btn btn-primary" id="open-deploy-modal">+ Deploy New Service</button>
+    </div>
+    <div class="uptime-grid" id="deployments-grid">
+      <div class="loading">Loading deployments...</div>
+    </div>
+  </div>
+
   <div>
     <div class="section-title">DORA Metrics</div>
     <div class="dora-grid">
@@ -174,6 +181,43 @@
     <div class="modal-actions">
       <button class="btn" id="cancel-add">Cancel</button>
       <button class="btn btn-primary" id="submit-add">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Deploy Service Modal -->
+<div class="modal-backdrop" id="deploy-modal-backdrop">
+  <div class="modal">
+    <h2>Deploy New Service</h2>
+    <div class="form-row">
+      <label for="deploy-name">Name</label>
+      <input type="text" id="deploy-name" placeholder="e.g. my-shortener" autocomplete="off" />
+    </div>
+    <div class="form-row">
+      <label for="deploy-image">Container Image</label>
+      <input type="text" id="deploy-image" placeholder="e.g. url-shortener:dev" autocomplete="off" />
+    </div>
+    <div class="form-row inline">
+      <div>
+        <label for="deploy-port">Port</label>
+        <input type="number" id="deploy-port" placeholder="8000" min="1" max="65535" />
+      </div>
+      <div>
+        <label for="deploy-replicas">Replicas</label>
+        <input type="number" id="deploy-replicas" placeholder="1" value="1" min="1" max="10" />
+      </div>
+    </div>
+    <div class="form-row">
+      <label for="deploy-environment">Environment</label>
+      <select id="deploy-environment">
+        <option value="staging">Staging</option>
+        <option value="production">Production</option>
+      </select>
+    </div>
+    <div class="form-error" id="deploy-error"></div>
+    <div class="modal-actions">
+      <button class="btn" id="cancel-deploy">Cancel</button>
+      <button class="btn btn-primary" id="submit-deploy">Deploy</button>
     </div>
   </div>
 </div>
@@ -222,7 +266,6 @@
           '<button class="btn btn-danger" title="Delete service">✕</button>' +
         '</div>';
 
-      // Set text content via .textContent to avoid HTML injection
       row.querySelector('.uptime-name').textContent = s.name;
       row.querySelector('.uptime-latency').textContent =
         (s.latency_ms ? s.latency_ms + 'ms' : 'N/A') + ' — ' + s.url;
@@ -230,10 +273,49 @@
       badge.textContent = s.status;
       badge.classList.add(s.status);
 
-      // Wire up delete (we need the service id, which /uptime doesn't return —
-      // we look it up via /services on click)
       row.querySelector('.btn-danger').addEventListener('click', () => deleteService(s.name));
+      grid.appendChild(row);
+    });
+  }
 
+  async function fetchDeployments() {
+    const res = await fetch(API + '/deployments');
+    const data = await res.json();
+    const grid = document.getElementById('deployments-grid');
+    grid.innerHTML = '';
+
+    if (data.deployed_services.length === 0) {
+      grid.innerHTML = '<div class="loading">No deployed services yet — click "Deploy New Service" to get started.</div>';
+      return;
+    }
+
+    data.deployed_services.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'uptime-row';
+      row.innerHTML =
+        '<div class="uptime-row-info">' +
+          '<div class="uptime-name"></div>' +
+          '<div class="uptime-latency"></div>' +
+        '</div>' +
+        '<div class="uptime-row-actions">' +
+          '<span class="badge env-badge"></span>' +
+          '<span class="badge status-badge"></span>' +
+          '<button class="btn btn-danger" title="Delete deployment">✕</button>' +
+        '</div>';
+
+      row.querySelector('.uptime-name').textContent = s.name;
+      row.querySelector('.uptime-latency').textContent =
+        s.image + ' — ' + s.replicas + ' replica' + (s.replicas === 1 ? '' : 's');
+
+      const envBadge = row.querySelector('.env-badge');
+      envBadge.textContent = s.environment;
+      envBadge.classList.add(s.environment);
+
+      const statusBadge = row.querySelector('.status-badge');
+      statusBadge.textContent = s.latest_status;
+      statusBadge.classList.add(s.latest_status);
+
+      row.querySelector('.btn-danger').addEventListener('click', () => deleteDeployment(s.name, s.environment));
       grid.appendChild(row);
     });
   }
@@ -248,59 +330,52 @@
   }
 
   async function refresh() {
-    await Promise.all([fetchScore(), fetchMetrics(), fetchUptime(), fetchDora()]);
+    await Promise.all([fetchScore(), fetchMetrics(), fetchUptime(), fetchDeployments(), fetchDora()]);
     document.getElementById('last-refresh').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
   }
 
-  // --- Modal logic ---
+  // --- Add Service modal ---
 
-  const modal = document.getElementById('add-modal-backdrop');
-  const nameInput = document.getElementById('service-name');
-  const urlInput = document.getElementById('service-url');
-  const errorEl = document.getElementById('form-error');
-  const submitBtn = document.getElementById('submit-add');
+  const addModal = document.getElementById('add-modal-backdrop');
+  const addNameInput = document.getElementById('service-name');
+  const addUrlInput = document.getElementById('service-url');
+  const addErrorEl = document.getElementById('form-error');
+  const addSubmitBtn = document.getElementById('submit-add');
 
-  function openModal() {
-    nameInput.value = '';
-    urlInput.value = '';
-    errorEl.textContent = '';
-    modal.classList.add('show');
-    nameInput.focus();
+  function openAddModal() {
+    addNameInput.value = '';
+    addUrlInput.value = '';
+    addErrorEl.textContent = '';
+    addModal.classList.add('show');
+    addNameInput.focus();
   }
 
-  function closeModal() {
-    modal.classList.remove('show');
-  }
+  function closeAddModal() { addModal.classList.remove('show'); }
 
-  document.getElementById('open-add-modal').addEventListener('click', openModal);
-  document.getElementById('cancel-add').addEventListener('click', closeModal);
+  document.getElementById('open-add-modal').addEventListener('click', openAddModal);
+  document.getElementById('cancel-add').addEventListener('click', closeAddModal);
+  addModal.addEventListener('click', (e) => { if (e.target === addModal) closeAddModal(); });
 
-  // Close modal when clicking outside the modal box
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) closeModal();
-  });
-
-  // Submit on Enter inside the form fields
-  [nameInput, urlInput].forEach(input => {
+  [addNameInput, addUrlInput].forEach(input => {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') submitAdd();
-      if (e.key === 'Escape') closeModal();
+      if (e.key === 'Escape') closeAddModal();
     });
   });
 
-  document.getElementById('submit-add').addEventListener('click', submitAdd);
+  addSubmitBtn.addEventListener('click', submitAdd);
 
   async function submitAdd() {
-    const name = nameInput.value.trim();
-    const url = urlInput.value.trim();
+    const name = addNameInput.value.trim();
+    const url = addUrlInput.value.trim();
 
     if (!name || !url) {
-      errorEl.textContent = 'Both name and URL are required.';
+      addErrorEl.textContent = 'Both name and URL are required.';
       return;
     }
 
-    submitBtn.disabled = true;
-    errorEl.textContent = '';
+    addSubmitBtn.disabled = true;
+    addErrorEl.textContent = '';
 
     try {
       const res = await fetch(API + '/services', {
@@ -308,49 +383,111 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, url }),
       });
-
       if (res.status === 201) {
-        closeModal();
+        closeAddModal();
         await refresh();
       } else {
         const data = await res.json();
-        errorEl.textContent = data.error || 'Something went wrong.';
+        addErrorEl.textContent = data.error || 'Something went wrong.';
       }
     } catch (e) {
-      errorEl.textContent = 'Network error: ' + e.message;
+      addErrorEl.textContent = 'Network error: ' + e.message;
     } finally {
-      submitBtn.disabled = false;
+      addSubmitBtn.disabled = false;
     }
   }
 
-  // --- Delete logic ---
-
   async function deleteService(name) {
-    if (!confirm('Delete service "' + name + '"? This can be undone via the API.')) {
-      return;
-    }
-
-    // Look up the service id by name
+    if (!confirm('Delete service "' + name + '"?')) return;
     const listRes = await fetch(API + '/services');
     const listData = await listRes.json();
     const service = listData.services.find(s => s.name === name);
+    if (!service) { alert('Service not found.'); await refresh(); return; }
+    const res = await fetch(API + '/services/' + service.id, { method: 'DELETE' });
+    if (res.ok) await refresh();
+    else alert('Failed to delete service.');
+  }
 
-    if (!service) {
-      alert('Service not found.');
-      await refresh();
+  // --- Deploy modal ---
+
+  const deployModal = document.getElementById('deploy-modal-backdrop');
+  const deployNameInput = document.getElementById('deploy-name');
+  const deployImageInput = document.getElementById('deploy-image');
+  const deployPortInput = document.getElementById('deploy-port');
+  const deployReplicasInput = document.getElementById('deploy-replicas');
+  const deployEnvInput = document.getElementById('deploy-environment');
+  const deployErrorEl = document.getElementById('deploy-error');
+  const deploySubmitBtn = document.getElementById('submit-deploy');
+
+  function openDeployModal() {
+    deployNameInput.value = '';
+    deployImageInput.value = '';
+    deployPortInput.value = '';
+    deployReplicasInput.value = '1';
+    deployEnvInput.value = 'staging';
+    deployErrorEl.textContent = '';
+    deployModal.classList.add('show');
+    deployNameInput.focus();
+  }
+
+  function closeDeployModal() { deployModal.classList.remove('show'); }
+
+  document.getElementById('open-deploy-modal').addEventListener('click', openDeployModal);
+  document.getElementById('cancel-deploy').addEventListener('click', closeDeployModal);
+  deployModal.addEventListener('click', (e) => { if (e.target === deployModal) closeDeployModal(); });
+
+  document.querySelectorAll('#deploy-modal-backdrop input, #deploy-modal-backdrop select').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeDeployModal();
+    });
+  });
+
+  deploySubmitBtn.addEventListener('click', submitDeploy);
+
+  async function submitDeploy() {
+    const name = deployNameInput.value.trim();
+    const image = deployImageInput.value.trim();
+    const port = parseInt(deployPortInput.value, 10);
+    const replicas = parseInt(deployReplicasInput.value, 10) || 1;
+    const environment = deployEnvInput.value;
+
+    if (!name || !image || !port) {
+      deployErrorEl.textContent = 'Name, image, and port are required.';
       return;
     }
 
-    const res = await fetch(API + '/services/' + service.id, { method: 'DELETE' });
-    if (res.ok) {
-      await refresh();
-    } else {
-      alert('Failed to delete service.');
+    deploySubmitBtn.disabled = true;
+    deployErrorEl.textContent = '';
+
+    try {
+      const res = await fetch(API + '/services/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, image, port, replicas, environment }),
+      });
+      if (res.status === 202) {
+        closeDeployModal();
+        await refresh();
+      } else {
+        const data = await res.json();
+        deployErrorEl.textContent = data.error || 'Deployment failed.';
+      }
+    } catch (e) {
+      deployErrorEl.textContent = 'Network error: ' + e.message;
+    } finally {
+      deploySubmitBtn.disabled = false;
     }
   }
 
+  async function deleteDeployment(name, environment) {
+    if (!confirm('Delete deployed service "' + name + '" (' + environment + ')? This will remove it from Kubernetes.')) return;
+    const res = await fetch(API + '/deployments/' + name + '?environment=' + environment, { method: 'DELETE' });
+    if (res.ok) await refresh();
+    else alert('Failed to delete deployment.');
+  }
+
   refresh();
-  setInterval(refresh, 30000);
+  setInterval(refresh, 10000);  // Faster refresh so deployment status updates feel live
 </script>
 </body>
 </html>

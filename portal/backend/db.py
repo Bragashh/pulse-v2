@@ -215,3 +215,62 @@ def list_deployments_for_service(service_id: int, limit: int = 10) -> list[dict]
             (service_id, limit),
         ).fetchall()
         return [dict(row) for row in rows]
+
+def add_deployment(
+    service_id: int,
+    image_tag: str,
+    environment: str,
+    status: str = "pending",
+    github_run_id: str = None,
+) -> int:
+    """Record a new deployment attempt. Returns the row id."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO deployments (service_id, image_tag, environment, status, github_run_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (service_id, image_tag, environment, status, github_run_id),
+        )
+        return cursor.lastrowid
+
+
+def update_deployment_status(deployment_id: int, status: str) -> bool:
+    """Update the status of an existing deployment."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE deployments SET status = ? WHERE id = ?",
+            (status, deployment_id),
+        )
+        return cursor.rowcount > 0
+
+
+def add_deployed_service(name: str, environment: str, image: str, port: int, replicas: int = 1) -> int:
+    """Insert a new deployed service row. Returns the new row's id."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO deployed_services (name, environment, image, port, replicas) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, environment, image, port, replicas),
+        )
+        return cursor.lastrowid
+
+
+def get_deployed_service_by_name(name: str, environment: str) -> dict | None:
+    """Find a deployed service by name + environment. Returns None if not found or deleted."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM deployed_services "
+            "WHERE name = ? AND environment = ? AND deleted_at IS NULL",
+            (name, environment),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def soft_delete_deployed_service(service_id: int) -> bool:
+    """Soft-delete a deployed service."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE deployed_services SET deleted_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND deleted_at IS NULL",
+            (service_id,),
+        )
+        return cursor.rowcount > 0
