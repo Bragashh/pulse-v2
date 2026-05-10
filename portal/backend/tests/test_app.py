@@ -482,3 +482,87 @@ def test_delete_nonexistent_deployment_returns_404(client):
     """Deleting a non-existent deployed service returns 404."""
     response = client.delete("/deployments/never-existed?environment=staging")
     assert response.status_code == 404
+
+# --- /deployments/<name>/promote ---
+
+def test_promote_deployment_returns_202(client, mocker):
+    """Promoting an existing staging deployment returns 202."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "promo", "service": "promo", "namespace": "pulse-deployed", "node_port": 31100,
+    })
+    mocker.patch("app.threading.Thread")
+
+    # First create a staging deployment
+    client.post("/services/deploy", json={
+        "name": "promo", "image": "nginx:1.0", "port": 80, "environment": "staging",
+    })
+
+    response = client.post("/deployments/promo/promote")
+    assert response.status_code == 202
+    data = response.get_json()
+    assert data["environment"] == "production"
+    assert data["image"] == "nginx:1.0"
+    assert data["deployment_name"] == "promo-prod"
+
+
+def test_promote_uses_staging_image(client, mocker):
+    """The promoted version should use the same image as staging."""
+    deploy_calls = []
+    def capture_deploy(name, image, port, replicas):
+        deploy_calls.append({"name": name, "image": image, "port": port, "replicas": replicas})
+        return {"deployment": name, "service": name, "namespace": "pulse-deployed", "node_port": 31000}
+
+    mocker.patch("app.deployer.deploy_service", side_effect=capture_deploy)
+    mocker.patch("app.threading.Thread")
+
+    client.post("/services/deploy", json={
+        "name": "imagetest", "image": "specific-image:v3", "port": 8080, "replicas": 3, "environment": "staging",
+    })
+    client.post("/deployments/imagetest/promote")
+
+    # Two deploys: staging (imagetest) then production (imagetest-prod), both with same image
+    assert len(deploy_calls) == 2
+    assert deploy_calls[1]["name"] == "imagetest-prod"
+    assert deploy_calls[1]["image"] == "specific-image:v3"
+    assert deploy_calls[1]["port"] == 8080
+    assert deploy_calls[1]["replicas"] == 3
+
+
+def test_promote_nonexistent_returns_404(client):
+    """Cannot promote a service that doesn't exist in staging."""
+    response = client.post("/deployments/never-existed/promote")
+    assert response.status_code == 404
+
+
+def test_promote_when_production_already_exists_returns_409(client, mocker):
+    """Cannot promote if a production version already exists."""
+    mocker.patch("app.deployer.deploy_service", return_value={
+        "deployment": "dupe", "service": "dupe", "namespace": "pulse-deployed", "node_port": 31200,
+    })
+    mocker.patch("app.threading.Thread")
+
+    client.post("/services/deploy", json={
+        "name": "dupe", "image": "nginx", "port": 80, "environment": "staging",
+    })
+    client.post("/deployments/dupe/promote")  # First promote — succeeds
+    response = client.post("/deployments/dupe/promote")  # Second — should 409
+    assert response.status_code == 409
+
+
+def test_promote_handles_kubernetes_failure(client, mocker):
+    """If the deployer raises during promotion, return 500."""
+    deploy_count = [0]
+    def fail_on_second(name, image, port, replicas):
+        deploy_count[0] += 1
+        if deploy_count[0] == 2:
+            raise Exception("k8s broke")
+        return {"deployment": name, "service": name, "namespace": "pulse-deployed", "node_port": 31300}
+
+    mocker.patch("app.deployer.deploy_service", side_effect=fail_on_second)
+    mocker.patch("app.threading.Thread")
+
+    client.post("/services/deploy", json={
+        "name": "willfail", "image": "nginx", "port": 80, "environment": "staging",
+    })
+    response = client.post("/deployments/willfail/promote")
+    assert response.status_code == 500

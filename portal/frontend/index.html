@@ -262,8 +262,10 @@
           '<div class="uptime-latency"></div>' +
         '</div>' +
         '<div class="uptime-row-actions">' +
-          '<span class="badge"></span>' +
-          '<button class="btn btn-danger" title="Delete service">✕</button>' +
+          '<span class="badge env-badge"></span>' +
+          '<span class="badge status-badge"></span>' +
+          '<button class="btn promote-btn" style="display:none" title="Promote to production">↑ Promote</button>' +
+          '<button class="btn btn-danger" title="Delete deployment">✕</button>' +
         '</div>';
 
       row.querySelector('.uptime-name').textContent = s.name;
@@ -314,6 +316,13 @@
       const statusBadge = row.querySelector('.status-badge');
       statusBadge.textContent = s.latest_status;
       statusBadge.classList.add(s.latest_status);
+
+      // Show promote button only for staging services
+      if (s.environment === 'staging' && s.latest_status === 'healthy') {
+        const promoteBtn = row.querySelector('.promote-btn');
+        promoteBtn.style.display = 'inline-block';
+        promoteBtn.addEventListener('click', () => promoteDeployment(s.name));
+      }
 
       row.querySelector('.btn-danger').addEventListener('click', () => deleteDeployment(s.name, s.environment));
       grid.appendChild(row);
@@ -476,6 +485,17 @@
       deployErrorEl.textContent = 'Network error: ' + e.message;
     } finally {
       deploySubmitBtn.disabled = false;
+    }
+  }
+
+  async function promoteDeployment(name) {
+    if (!confirm('Promote "' + name + '" from staging to production? This will deploy the same image to production.')) return;
+    const res = await fetch(API + '/deployments/' + name + '/promote', { method: 'POST' });
+    if (res.ok) {
+      await refresh();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert('Failed to promote: ' + (data.error || 'unknown error'));
     }
   }
 

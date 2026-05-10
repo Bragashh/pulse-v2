@@ -386,16 +386,92 @@ def remove_deployed_service(name):
     if not svc:
         return jsonify({"error": "service not found"}), 404
 
-    # Remove from Kubernetes first
+    # Production deployments are suffixed with -prod in Kubernetes
+    deployment_name = name if environment == "staging" else f"{name}-prod"
+
     try:
-        deployer.delete_deployment(name)
+        deployer.delete_deployment(deployment_name)
     except Exception as e:
         return jsonify({"error": f"kubernetes delete failed: {str(e)}"}), 500
 
-    # Then soft-delete from DB
     db.soft_delete_deployed_service(svc["id"])
 
     return jsonify({"name": name, "environment": environment, "deleted": True})
+
+    
+@app.route('/deployments/<name>/promote', methods=['POST'])
+@metrics.track_request('deployments_promote')
+def promote_deployment(name):
+    """
+    Promote a service from staging to production.
+
+    Reads the staging deployment's image/port/replicas, then deploys the same
+    parameters under the 'production' environment. Both environments run in parallel.
+    """
+    # Find the staging service
+    staging_svc = db.get_deployed_service_by_name(name, "staging")
+    if not staging_svc:
+        return jsonify({"error": f"no staging deployment named '{name}' found"}), 404
+
+    # Check if production already exists for this name
+    prod_svc = db.get_deployed_service_by_name(name, "production")
+    if prod_svc:
+        return jsonify({
+            "error": f"a production deployment named '{name}' already exists; "
+                     "delete it first or use a different name"
+        }), 409
+
+    # Use the staging service's image/port/replicas as the production source of truth
+    image = staging_svc["image"]
+    port = staging_svc["port"]
+    replicas = staging_svc["replicas"]
+
+    # Record in DB
+    prod_service_id = db.add_deployed_service(
+        name=name,
+        environment="production",
+        image=image,
+        port=port,
+        replicas=replicas,
+    )
+    deployment_id = db.add_deployment(
+        prod_service_id, image, "production", status="deploying"
+    )
+
+    # The deployer doesn't currently namespace by environment — it uses pulse-deployed
+    # for everything. To keep staging and production separated, we suffix the production
+    # deployment name. This way both can coexist in the same namespace.
+    prod_deployment_name = f"{name}-prod"
+
+    try:
+        result = deployer.deploy_service(
+            name=prod_deployment_name,
+            image=image,
+            port=port,
+            replicas=replicas,
+        )
+    except Exception as e:
+        db.update_deployment_status(deployment_id, "failed")
+        return jsonify({"error": f"promotion failed: {str(e)}"}), 500
+
+    # Background poll for health
+    thread = threading.Thread(
+        target=_async_poll_status,
+        args=(deployment_id, prod_deployment_name),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({
+        "service_id": prod_service_id,
+        "deployment_id": deployment_id,
+        "name": name,
+        "deployment_name": prod_deployment_name,
+        "environment": "production",
+        "image": image,
+        "node_port": result["node_port"],
+        "status": "deploying",
+    }), 202
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
