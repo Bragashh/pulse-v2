@@ -53,41 +53,41 @@ The observability stack provides:
 
 ### The dashboard
 
-![Pulse dashboard with monitored services](docs/screenshots/dashboard-overview.png)
+![Pulse dashboard with monitored services](docs/screenshots/dashboard-overview.webp)
 
 ### Self-service deploy in progress
 
-![Deploy in progress](docs/screenshots/deploy-in-progress.png)
+![Deploy in progress](docs/screenshots/deploy-in-progress.webp)
 
 A deployment goes from `deploying` to `healthy` automatically as Kubernetes brings the pods up. Pulse polls the Kubernetes API every 2 seconds.
 
 ### Healthy staging deployment with Promote button
 
-![Staging deployment healthy](docs/screenshots/deploy-healthy.png)
+![Staging deployment healthy](docs/screenshots/deploy-healthy.webp)
 
 ### Promoting to production
 
-![Promotion in progress](docs/screenshots/promote-in-progress.png)
+![Promotion in progress](docs/screenshots/promote-in-progress.webp)
 
 ### Both staging and production running
 
-![Staging and production running](docs/screenshots/staging-and-production.png)
+![Staging and production running](docs/screenshots/staging-and-production.webp)
 
 ### Grafana metrics dashboard
 
-![Grafana dashboard for Pulse backend](docs/screenshots/grafana-metrics.png)
+![Grafana dashboard for Pulse backend](docs/screenshots/grafana-metrics.webp)
 
 Custom Pulse metrics include `pulse_http_requests_total` (counter, per-endpoint), `pulse_http_request_duration_seconds` (histogram, for percentile calculations), and gauges for CPU, memory, disk, and monitored services count.
 
 ### Grafana logs (Loki)
 
-![Logs view in Grafana](docs/screenshots/grafana-logs.png)
+![Logs view in Grafana](docs/screenshots/grafana-logs.webp)
 
 Promtail tails Docker container logs and ships them to Loki. Grafana queries Loki using LogQL.
 
 ### Kubernetes resources
 
-![kubectl get all in url-shortener namespace](docs/screenshots/kubectl-shortener.png)
+![kubectl get all in url-shortener namespace](docs/screenshots/kubectl-shortener.webp)
 
 The example URL shortener service: 1 Redis pod (ClusterIP service), 2 shortener pods (NodePort service exposing port 30800).
 
